@@ -5,6 +5,7 @@
 # $2 - the read length to trim to
 # $3 - the read error upper bound
 # $4 - the average read error
+# $5 - the error profile (or 0 for default)
 
 START=$(date +%s)
 
@@ -28,14 +29,15 @@ done
 
 echo "Cleaning directory $1 . readlength = $2 . Errorrate=$3"
 # need to add the mean error as $4
-/home/amam7564/scripts/CleanSeqsIndel.py $1 -e $3
+/home/amam7564/scripts/CleanSeqsIndel.py $1 -e $3 -m $4 -d $5
 
 echo "removing chimeras and reformatting"
 for f in $FILES
 do
 	echo "Processing $f file..."
 	/home/amam7564/bin/usearch7 -uchime_denovo $f.tuni.clean -nonchimeras $f.tuni.clean.noch.fa
-	/home/amam7564/bin/fastx/fasta_formatter -i $f.tuni.clean.noch.fa -o $f.ref.fa
+	/home/amam7564/bin/fastx/fasta_formatter -i $f.tuni.clean.noch.fa -o $f.ref.t.fa
+	/home/amam7564/scripts/clean_phix.sh $f.ref.t.fa $f.ref.fa
 done
 
 # add the marker file for the CleanDirParallel.py so it knows we finished

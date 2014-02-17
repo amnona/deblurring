@@ -3,11 +3,12 @@
 #!/macqiime/bin/python
 #!/home/amam7564/qiime_software/python-2.7.3-release/bin/python
 """
+Deblur sequences
 Created on Thu Sep 19 17:43:09 2013
-V1.1
 @author: amnon
-lala
 """
+
+__version__ = "1.2"
 
 import argparse
 
@@ -15,9 +16,9 @@ from os import listdir
 from os.path import isfile,join
 import sys
 import numpy as np
-#sys.path.insert(0,'/macqiime/lib/python2.7/site-packages')
 from cogent.parse.fasta import MinimalFastaParser
 
+import LogMe
 
 def SeqToArray(seq):
     """ convert a string sequence to a numpy array"""
@@ -46,7 +47,28 @@ def SeqToArray(seq):
     return(seqa)
 
 
-def RemoveError(seqnames,seqs,seqsnp,sfreq,readerror,meanerror):
+def RemoveError(log,seqs,seqsnp,sfreq,readerror,meanerror,ofracerr):
+    """ Deblur the reads
+    Input:
+        log - a LogMe log module to write the debluring info
+        seqs - the list of sequences
+        seqsnp - a list of numpy arrays of the sequences (for faster comparison) - from SeqToArray()
+        sfreq - dictionary (based on the sequence) of the number of reads for each sequence
+        readerror - the maximal read error expected (fraction - typically 0.01)
+        meanerror - the mean read error used for peak spread normalization - typically 0.01
+        ofracerr - the error distribution array, or 0 if use default
+    Output:
+        sfreq - the deblurred number of reads for each sequence (0 if not present)
+        debugdata - a list of strings
+    Notes:
+        meanerror is used only for normalizing the peak height before deblurring, whereas readerror
+        is used for calculating the expected number of errors for each position
+        error distribution array X should be of length >10, where Xi = max frequency of error hamming i
+        if it is 0, we use the default distribution
+    """
+    # take the list values so it won't change
+    fracerr=list(ofracerr)
+    
     # we assume all sequences are of equal length
     commonlen=len(seqs[0])
     for cseq in seqs:
@@ -65,22 +87,42 @@ def RemoveError(seqnames,seqs,seqsnp,sfreq,readerror,meanerror):
 
     # create the error profile from the read error
     # exponential independent
-    fracerr=[]
-    for a in range(10):
-        fracerr.append(pow(readerror,a)/modfactor)
+    #   fracerr=[]
+    #   for a in range(10):
+    #       fracerr.append(pow(readerror,a)/modfactor)
+
     # empirical
-    fracerr=[1.0/modfactor,pow(readerror,1)/modfactor,2*pow(readerror,2)/modfactor,pow(readerror,2)/modfactor,pow(readerror,2)/modfactor,pow(readerror,2)/modfactor,pow(readerror,2)/modfactor,pow(readerror,2)/modfactor,pow(readerror,2)/modfactor,pow(readerror,2)/modfactor]
+    #    fracerr=[1.0/modfactor,pow(readerror,1)/modfactor,2*pow(readerror,2)/modfactor,pow(readerror,2)/modfactor,pow(readerror,2)/modfactor,pow(readerror,2)/modfactor,pow(readerror,2)/modfactor,pow(readerror,2)/modfactor,pow(readerror,2)/modfactor,pow(readerror,2)/modfactor]
+
     # used for the 22 mock mixture
-    fracerr=[1.0/modfactor,pow(readerror,1)/modfactor,0.01,0.01,0.01,0.005,0.005,0.005,0.005,0.005,0.005,0.001,0.001,0.001,0.001,0.001,0.001,0.0005,0.0001,0.0001]
+    #    fracerr=[1.0/modfactor,pow(readerror,1)/modfactor,0.01,0.01,0.01,0.005,0.005,0.005,0.005,0.005,0.005,0.001,0.001,0.001,0.001,0.001,0.001,0.0005,0.0001,0.0001]
+
     # used for the 44 mock mixture
-    #e1=pow(readerror,1)/modfactor
-    #fracerr=[1.0/modfactor,e1,e1/4,e1/5,e1/6,e1/8,e1/10,e1/15,e1/20,e1/30,e1/40,e1/50,e1/50,e1/50,e1/50,e1/50,e1/50,e1/100,e1/500,e1/500]
+    #   e1=pow(readerror,1)/modfactor
+    #   fracerr=[1.0/modfactor,e1,e1/4,e1/5,e1/6,e1/8,e1/10,e1/15,e1/20,e1/30,e1/40,e1/50,e1/50,e1/50,e1/50,e1/50,e1/50,e1/100,e1/500,e1/500]
+
+    # if fracerr not supplied, use the default (22 mock mixture setup)
+    log.log("original fracer parameter:",fracerr)
+    if fracerr==0:
+        fracerr=[1.0/modfactor,pow(readerror,1)/modfactor,0.01,0.01,0.01,0.005,0.005,0.005,0.005,0.005,0.005,0.001,0.001,0.001,0.001]
+        log.log("modified fracerr because it was 0")
+    else:
+        for idx,val in enumerate(fracerr):
+            fracerr[idx]=fracerr[idx]/modfactor
+
+    maxhdist=len(fracerr)-1
+
     print "fracerr"
     print fracerr
     print "readerror"
     print readerror
     print "modfactor"
-    print modfactor        
+    print modfactor   
+
+    log.log("readerror:",readerror)
+    log.log("meanerror:",meanerror)
+    log.log("mod factor:",modfactor)
+    log.log("fracerr:",fracerr)     
 
     for idx,cseq in enumerate(seqs):
         csfreq=sfreq[cseq]
@@ -106,7 +148,7 @@ def RemoveError(seqnames,seqs,seqsnp,sfreq,readerror,meanerror):
             # calculate the hamming distance
             hdist=np.count_nonzero(np.not_equal(seqnptmp,cseqnp))
             # if far away, don't need to correct
-            if hdist>14:
+            if hdist>maxhdist:
                 continue
             # close, so lets calculate exact distance
             numsub=0
@@ -135,7 +177,7 @@ def RemoveError(seqnames,seqs,seqsnp,sfreq,readerror,meanerror):
 
 
 
-def CleanSeqs(dirname,readerror,nomod):
+def CleanSeqs(dirname,readerror,meanerror,errordist):
     print "Cleaning"
 # prepare the file list in the directory
     filelist=[f for f in listdir(dirname) if isfile(join(dirname,f))]
@@ -149,6 +191,10 @@ def CleanSeqs(dirname,readerror,nomod):
         seqnames=[]
         seqsnp=[]
         sortfreq=[]
+        log=LogMe.LogMe(join(dirname,cfile)+'.log')
+        log.log("CleanSeqsIndel.py version",__version__)
+        log.log("Original dir name:",dirname)
+        log.log("Original file name:",cfile)
         print cfile
         fafile=open(join(dirname,cfile))
         for seqid,seq in MinimalFastaParser(fafile):
@@ -178,7 +224,7 @@ def CleanSeqs(dirname,readerror,nomod):
 
             # after loading the file - remove the read errors (MAIN FUNCTION)
             print "orig readerror",readerror
-            cfreq=RemoveError(seqnames,seqs,seqsnp,sfreq,readerror,nomod)
+            cfreq=RemoveError(log,seqs,seqsnp,sfreq,readerror,meanerror,errordist)
             # and finally save the new fasta as a '.clean' file
             ofile=open(join(dirname,cfile+'.clean'),'w')
             for cseq in seqs:
@@ -197,10 +243,19 @@ def main(argv):
     parser.add_argument('dirname',help='input dir (containing .tuni files unique and truncated)')
     parser.add_argument('-e','--readerror',help='readerror rate',default=0.05)
     parser.add_argument('-m','--meanerror',help='the mean error, used for original sequence estimate (default same as readerror)',default=-1)
+    parser.add_argument('-d','--errordist',help='a comma separated list of error probabilities for each edit distance (min length=10)',default=0)
     args=parser.parse_args(argv)
     if args.meanerror==-1:
         args.meanerror=args.readerror
-    CleanSeqs(args.dirname,float(args.readerror),float(args.meanerror))
+
+    # cast the error profile to a list if not 0 (default error profile)
+    errordist=args.errordist
+    if not errordist==0:
+        errorstr=errordist
+        errordist=errorstr.split(',')
+        errordist=list(map(float,errordist))
+    
+    CleanSeqs(args.dirname,float(args.readerror),float(args.meanerror),errordist)
     
 if __name__ == "__main__":
     main(sys.argv[1:])                
