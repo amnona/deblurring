@@ -23,5 +23,6 @@ note that this curretnly works with qsub!
 The main deblurring python script is:
 CleanSeqsIndel.py
 
-
-
+In order to join the deblurred sample .ref.fa files to a single biom table, use:
+CreateTable.py -d dirname -l -o outputbiomtable
+it creates a text biom table (outputbiomtable.txt) and the corresponding fasta file (outputbiomtable.seq.fa)
