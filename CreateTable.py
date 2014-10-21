@@ -11,7 +11,7 @@ in each fasta file (column)
 @author: amnon
 """
 
-__version__ = "0.9"
+__version__ = "1.0"
 
 import argparse
 
@@ -22,14 +22,17 @@ import numpy as np
 from cogent.parse.fasta import MinimalFastaParser
 
 
-def CreateTable(fastanames,output,header):
+def CreateTable(fastanames,output,header,singlefile,normalize,minreads):
 	allseqs={}
 	allfreqs={}
+	totreads={}
 	# load all the sequences
 	cseqnum=1
 	for cfilename in fastanames:
 		cfile=open(cfilename)
 		allfreqs[cfilename]={}
+		ctotseqs=0
+		ctotreads=0
 		for seqid,seq in MinimalFastaParser(cfile):
 			seq=seq.upper()
 			# if we have a header line keep only the number os OTU name
@@ -38,6 +41,7 @@ def CreateTable(fastanames,output,header):
 			else:
 				allseqs[seq]=str(cseqnum)+'-'+seqid
 			cseqnum+=1
+			ctotseqs+=1
 			# need to modify for frequency
 			try:
 				numseqs=float(seqid[seqid.find(';size=')+6:-1])
@@ -45,33 +49,59 @@ def CreateTable(fastanames,output,header):
 				numseqs=1
 			if allfreqs[cfilename].has_key(seq):
 				allfreqs[cfilename][seq]+=numseqs
+				print("Seq "+seq+" Already in file "+cfilename)
 			else:
 				allfreqs[cfilename][seq]=numseqs
+			ctotreads+=numseqs
 		cfile.close()
+		totreads[cfilename]=ctotreads
+
+		print "File "+cfilename+" has "+str(ctotseqs)+" Sequences and"+str(ctotreads)+" reads"
 
 	# now write the table 
 	outfile=open(output+'.table.txt','w')
 	outfileseq=open(output+'.seq.fa','w')
 	if header:
-		outfile.write('OTUID')
+		outfile.write('# Created by CreateTable.py version '+__version__+'\n')
+		outfile.write('#OTUID')
 		for cfilename in fastanames:
 			cfilename=basename(cfilename)
 			# need to do it more elegantly
-			if cfilename[-13:]=='.fasta.ref.fa':
-				outfile.write('\t'+cfilename[:-13])
+#			if cfilename[-13:]=='.fasta.ref.fa':
+#				outfile.write('\t'+cfilename[:-13])
+#			else:
+			fastapos=cfilename.find('.fasta')
+			if fastapos>-1:
+				outfile.write('\t'+cfilename[:fastapos])
 			else:
 				outfile.write('\t'+cfilename)
 		outfile.write('\n')
 	for seq,seqname in allseqs.items():
-		outfileseq.write('>'+seqname+'\n')
-		outfileseq.write(seq+'\n')
-		outfile.write(seqname)
-		for cfilename in fastanames:
-			cfreq=0
-			if allfreqs[cfilename].has_key(seq):
-				cfreq=allfreqs[cfilename][seq]
-			outfile.write('\t'+str(cfreq))
-		outfile.write('\n')
+		writeit=True
+		if minreads>0:
+			tfreq=0
+			for cfilename in fastanames:
+				if allfreqs[cfilename].has_key(seq):
+					tfreq=tfreq+allfreqs[cfilename][seq]
+			if tfreq<minreads:
+				writeit=False
+
+		if writeit:
+			outfileseq.write('>'+seqname+'\n')
+			outfileseq.write(seq+'\n')
+			if singlefile:
+				outfile.write(seq)
+			else:
+				outfile.write(seqname)
+			for cfilename in fastanames:
+				cfreq=0
+				if allfreqs[cfilename].has_key(seq):
+					if normalize:
+						cfreq=10000.0*float(allfreqs[cfilename][seq])/totreads[cfilename]
+					else:
+						cfreq=allfreqs[cfilename][seq]
+				outfile.write('\t'+str(cfreq))
+			outfile.write('\n')
 	outfile.close()
 	outfileseq.close()
 
@@ -82,6 +112,9 @@ def main(argv):
     parser.add_argument('-d','--indir',help='name of input directory containing .ref.fa files to use (instead of -i)',default='')
     parser.add_argument('-l','--headerline',help='include header line (for biom table compatibility',action='store_true')
     parser.add_argument('-o','--output',help='output file name (creates 2 files - .seq.fa and .table.txt)')
+    parser.add_argument('-s','--singlefile',help='output a single table text file with sequences embedded',action='store_true')
+    parser.add_argument('-n','--normalize',help='normalize each column to sum 1',action='store_true')
+    parser.add_argument('-m','--minreads',help='minimal number of reads per otu',default='0')
 
     args=parser.parse_args(argv)
     # if we have an input directory use it
@@ -94,8 +127,8 @@ def main(argv):
     else:
     # otherwise use the file list
     	fasta=args.fasta[0]
-    print(fasta)
-    CreateTable(fasta,args.output,args.headerline)
+#    print(fasta)
+    CreateTable(fasta,args.output,args.headerline,args.singlefile,args.normalize,int(args.minreads))
     
 if __name__ == "__main__":
     main(sys.argv[1:])                
