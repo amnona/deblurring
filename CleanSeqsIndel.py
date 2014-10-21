@@ -8,7 +8,7 @@ Created on Thu Sep 19 17:43:09 2013
 @author: amnon
 """
 
-__version__ = "1.2"
+__version__ = "1.995"
 
 import argparse
 
@@ -17,6 +17,12 @@ from os.path import isfile,join
 import sys
 import numpy as np
 from cogent.parse.fasta import MinimalFastaParser
+# for the pairwise alignment
+from cogent.align.align import global_pairwise
+from cogent.align.align import make_dna_scoring_dict
+from cogent import DNA
+from cogent.align.algorithm import nw_align
+#from Bio import pairwise2
 
 import LogMe
 
@@ -47,7 +53,7 @@ def SeqToArray(seq):
     return(seqa)
 
 
-def RemoveError(log,seqs,seqsnp,sfreq,readerror,meanerror,ofracerr):
+def RemoveError(log,seqs,seqsnp,sfreq,readerror,meanerror,ofracerr,indelprob,indelmax,pyroseq):
     """ Deblur the reads
     Input:
         log - a LogMe log module to write the debluring info
@@ -57,6 +63,9 @@ def RemoveError(log,seqs,seqsnp,sfreq,readerror,meanerror,ofracerr):
         readerror - the maximal read error expected (fraction - typically 0.01)
         meanerror - the mean read error used for peak spread normalization - typically 0.01
         ofracerr - the error distribution array, or 0 if use default
+        indelprob - the probability for an indel (currently constant for number of indels until max is reached)
+        indelmax - the maximal number of indels expected by errors (error cutoff)
+        pyroseq - if set, use pairwise alignment for pyrosequencing data
     Output:
         sfreq - the deblurred number of reads for each sequence (0 if not present)
         debugdata - a list of strings
@@ -119,10 +128,15 @@ def RemoveError(log,seqs,seqsnp,sfreq,readerror,meanerror,ofracerr):
     print "modfactor"
     print modfactor   
 
+    log.log("indel prob:",indelprob)
+    log.log("indel max:",indelmax)
     log.log("readerror:",readerror)
     log.log("meanerror:",meanerror)
     log.log("mod factor:",modfactor)
     log.log("fracerr:",fracerr)     
+
+    # for pairwise alignment:
+    DNAm = make_dna_scoring_dict(10, -8, -8)
 
     for idx,cseq in enumerate(seqs):
         csfreq=sfreq[cseq]
@@ -151,20 +165,62 @@ def RemoveError(log,seqs,seqsnp,sfreq,readerror,meanerror,ofracerr):
             if hdist>maxhdist:
                 continue
             # close, so lets calculate exact distance
+
             numsub=0
             numindel=0
-            for cpos in range(oseqlen):
-                if not (cseqnp[cpos]==seqnptmp[cpos]):
-                    if seqnptmp[cpos]=='-':
-                        numindel+=1
-                    else:
-                        numsub+=1
+            # experimental try 2
+            # s1=seqs[idx].replace('-','')
+            # s2=seqs[idxtmp].replace('-','')
+            # cseq1,cseq2=nw_align(s1,s2)
+
+            # experimental: pairwise align the sequences
+            if pyroseq:
+                s0=DNA.makeSequence(seqs[idx])
+                s0=s0.degap()
+                s1=DNA.makeSequence(seqs[idxtmp])
+                s1=s1.degap()
+                print s0._seq
+                print s1._seq
+                align = global_pairwise(s0, s1, DNAm, 10, 9)
+                a0=align.getGappedSeq('seq_0')
+                a1=align.getGappedSeq('seq_1')            
+                cseq1=a0._seq
+                cseq2=a1._seq
+
+                len1=len(cseq1.rstrip('-'))
+                len2=len(cseq2.rstrip('-'))
+                oseqlen=len(cseq1)
+                for cpos in range(oseqlen):
+                    if not (cseq1[cpos]==cseq2[cpos]):
+                        if cseq1[cpos]=='-':
+                            if cpos<len1:
+                                numindel+=1
+                        else:
+                            if cseq2[cpos]=='-':
+                                if cpos<len2:
+                                    numindel+=1
+                            else:
+                                numsub+=1
+
+            # not pyrosequencing so use the faster global alignment
+            else:
+                for cpos in range(oseqlen):
+                    if not (cseqnp[cpos]==seqnptmp[cpos]):
+                        # 4 is '-'
+                        if seqnptmp[cpos]==4:
+                            numindel+=1
+                        else:
+                            if cseqnp[cpos]==4:
+                                numindel+=1
+                            else:
+                                numsub+=1
+
             nerr=numerr[numsub]
 
             # remove errors due to (PCR?) indels (saw in 22 mock mixture)
             if numindel>0:
-                nerr=nerr*0.01
-            if numindel>3:
+                nerr=nerr*indelprob
+            if numindel>indelmax:
                 nerr=0
 
             # if the effect is small - don't do anything
@@ -172,12 +228,28 @@ def RemoveError(log,seqs,seqsnp,sfreq,readerror,meanerror,ofracerr):
                 continue
             # met all the criteria - so correct the frequency of the neighbor
             sfreq[seqs[idxtmp]]-=nerr
+            # if sfreq[seqs[idxtmp]]<=0:
+            #     if sfreq[seqs[idxtmp]]+nerr>0:
+            #         log.log("Removed sequence ",idxtmp," due to sequence ",idx)
+            #         log.log("seq:",idx," and ",idxtmp," have ",numindel," indels and ",numsub,"substitutions")
+            #         log.log(cseq1)
+            #         log.log(cseq2)
+            #         log.log("true seq freq:",csfreq)
+            #         log.log("freq from ",sfreq[seqs[idxtmp]]+nerr," to ",sfreq[seqs[idxtmp]])
+            # else:
+            #     if numindel>0:
+            #         log.log("====indels but no delete!!!!")
+            #         log.log("seq:",idx," and ",idxtmp," have ",numindel," indels and ",numsub,"substitutions")
+            #         log.log(cseq1)
+            #         log.log(cseq2)
+            #         log.log("true seq freq:",csfreq)
+            #         log.log("freq from ",sfreq[seqs[idxtmp]]+nerr," to ",sfreq[seqs[idxtmp]])
     return(sfreq)
 
 
 
 
-def CleanSeqs(dirname,readerror,meanerror,errordist):
+def CleanSeqs(dirname,readerror,meanerror,errordist,indelprob,indelmax,pyroseq):
     print "Cleaning"
 # prepare the file list in the directory
     filelist=[f for f in listdir(dirname) if isfile(join(dirname,f))]
@@ -222,14 +294,21 @@ def CleanSeqs(dirname,readerror,meanerror,errordist):
             seqnames=[seqnames[i] for i in sortorder]
             seqsnp=[seqsnp[i] for i in sortorder]
 
+ #           for cseq in seqs:
+ #               log.log(cseq," size=",sfreq[cseq])
             # after loading the file - remove the read errors (MAIN FUNCTION)
             print "orig readerror",readerror
-            cfreq=RemoveError(log,seqs,seqsnp,sfreq,readerror,meanerror,errordist)
+            cfreq=RemoveError(log,seqs,seqsnp,sfreq,readerror,meanerror,errordist,indelprob,indelmax,pyroseq)
+#            log.log("=================================")
+#            for cseq in seqs:
+#                log.log(cseq," size=",sfreq[cseq])
             # and finally save the new fasta as a '.clean' file
             ofile=open(join(dirname,cfile+'.clean'),'w')
+            cid=1
             for cseq in seqs:
                 if round(cfreq[cseq])>0:
-                    ofile.write('>aa;size='+str(int(round(cfreq[cseq])))+';\n')
+                    ofile.write('>aa'+str(cid)+';size='+str(int(round(cfreq[cseq])))+';\n')
+                    cid+=1
                     csequp=cseq.upper()
                     for a in range(len(csequp)):
                         if not (csequp[a]=='-'):
@@ -239,9 +318,12 @@ def CleanSeqs(dirname,readerror,meanerror,errordist):
     
 
 def main(argv):
-    parser=argparse.ArgumentParser(description='Clean read errors from illumina reads')
+    parser=argparse.ArgumentParser(description='Clean read errors from illumina reads. version '+__version__)
     parser.add_argument('dirname',help='input dir (containing .tuni files unique and truncated)')
     parser.add_argument('-e','--readerror',help='readerror rate',default=0.05)
+    parser.add_argument('--indelmax',help='maximal indel number',default=3)
+    parser.add_argument('-i','--indelprob',help='indel probability (same for N indels)',default=0.01)
+    parser.add_argument('-p','--pyroseq',help='Use pairwise alignment for pyrosequencing (slower)',action='store_true')
     parser.add_argument('-m','--meanerror',help='the mean error, used for original sequence estimate (default same as readerror)',default=-1)
     parser.add_argument('-d','--errordist',help='a comma separated list of error probabilities for each edit distance (min length=10)',default=0)
     args=parser.parse_args(argv)
@@ -255,7 +337,7 @@ def main(argv):
         errordist=errorstr.split(',')
         errordist=list(map(float,errordist))
     
-    CleanSeqs(args.dirname,float(args.readerror),float(args.meanerror),errordist)
+    CleanSeqs(args.dirname,float(args.readerror),float(args.meanerror),errordist,float(args.indelprob),float(args.indelmax),args.pyroseq)
     
 if __name__ == "__main__":
     main(sys.argv[1:])                

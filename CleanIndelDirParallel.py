@@ -8,7 +8,7 @@ Created on Fri Dec 27 17:09:10 2013
 @author: amnon
 """
 
-__version__ = "0.9"
+__version__ = "1.2"
 
 import argparse
 
@@ -33,7 +33,11 @@ def WriteLog(logfilename,what):
 # readerror - the upper limit for read error (0.01)
 # meanerror - the mean read error (0.01)
 # logfilename - filename for the log
-def CleanDirParallel(dirname,numprocs,readlen,readerror,meanerror,errordist,logfilename):
+# keeptmp - if true don't delete temporary files
+# indelprob - the probability for indel occuring (constant for number of indels...)
+# indelmax - the maximal indel allowable
+# pyroseq - if true, use the pairwise alignment for pyrosequencing mode
+def CleanDirParallel(dirname,numprocs,readlen,readerror,meanerror,errordist,logfilename,keeptmp,indelprob,indelmax,pyroseq):
     WriteLog(logfilename,'Preparing to clean parallel using '+str(numprocs)+' processes')
     WriteLog(logfilename,'Current directory is:'+os.getcwd())
     WriteLog(logfilename,'Directory to clean is:'+dirname)
@@ -78,7 +82,10 @@ def CleanDirParallel(dirname,numprocs,readlen,readerror,meanerror,errordist,logf
                 scriptFile.write('mv '+join(dirname,fileList[listpos])+' '+join(pDirName,fileList[listpos])+'\n')
                 listpos+=1
             qsubStr='qsub -d $PWD -V -k oe -q friendlyq -N clean_'+dirname+'_p_'+str(cproc)
-            scriptFile.write('echo "/home/amam7564/scripts/clean_indel.sh '+pDirName+' '+str(readlen)+' '+str(readerror)+' '+str(meanerror)+' '+str(errordist)+'" | '+qsubStr+'\n')
+            if pyroseq:
+                scriptFile.write('echo "/home/amam7564/scripts/clean_indel_pyro.sh '+pDirName+' '+str(readlen)+' '+str(readerror)+' '+str(meanerror)+' '+str(errordist)+' '+str(indelprob)+' '+str(indelmax)+'" | '+qsubStr+'\n')
+            else:
+                scriptFile.write('echo "/home/amam7564/scripts/clean_indel.sh '+pDirName+' '+str(readlen)+' '+str(readerror)+' '+str(meanerror)+' '+str(errordist)+' '+str(indelprob)+' '+str(indelmax)+'" | '+qsubStr+'\n')
 
     # and make the script executable
     cstat=os.stat(scriptFileName)
@@ -113,7 +120,10 @@ def CleanDirParallel(dirname,numprocs,readlen,readerror,meanerror,errordist,logf
             scriptFile.write('mv '+pDirName+'/*.log '+dirname+'/\n')
             scriptFile.write('mv '+pDirName+'/*.fasta '+dirname+'/\n')
             scriptFile.write('mv '+pDirName+'/*.fasta.tuni '+dirname+'/\n')
-            scriptFile.write('rm -r '+pDirName+'\n')
+            scriptFile.write('mv '+pDirName+'/*.fasta.ptuni '+dirname+'/\n')
+            # if we set the keeptmp flag, don't delete the old directory
+            if not keeptmp:
+                scriptFile.write('rm -r '+pDirName+'\n')
 
     # and make the script executable
     cstat=os.stat(scriptFileName)
@@ -136,11 +146,16 @@ def main(argv):
     parser.add_argument('-d','--errordist',help='a comma separated list of error probabilities for each edit distance (min length=10)',default=0)
     parser.add_argument('-n','--numprocs',help='number of processes',default=1,type=int)
     parser.add_argument('-o','--logfile',help='log file name',default='parallel.log')
+    parser.add_argument('--indelmax',help='maximal indel number',default=3)
+    parser.add_argument('-i','--indelprob',help='indel probability (same for N indels)',default=0.01)
+    parser.add_argument('--keeptmp',help="don't delete temporary files",action='store_true')
+    parser.add_argument('-p','--pyroseq',help='Use pairwise alignment for pyrosequencing (slower)',action='store_true')
+
     args=parser.parse_args(argv)
     if (args.meanerror<0):
         args.meanerror=args.readerror
 
-    CleanDirParallel(args.dirname,args.numprocs,args.readlen,args.readerror,args.meanerror,args.errordist,args.logfile)
+    CleanDirParallel(args.dirname,args.numprocs,args.readlen,args.readerror,args.meanerror,args.errordist,args.logfile,args.keeptmp,args.indelprob,args.indelmax,args.pyroseq)
     
 if __name__ == "__main__":
     main(sys.argv[1:])                

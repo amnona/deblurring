@@ -32,7 +32,7 @@ done
 
 echo "Cleaning directory $1 . readlength = $2 . Errorrate=$3"
 # need to add the mean error as $4
-/home/amam7564/scripts/CleanSeqsIndel.py $1 -e $3 -m $4 -d $5 -i $6 --indelmax $7
+/home/amam7564/scripts/CleanSeqsIndel.py $1 -e $3 -m $4 -d $5 -i $6 --indelmax $7 --pyroseq
 
 echo "removing chimeras and reformatting"
 for f in $FILES
